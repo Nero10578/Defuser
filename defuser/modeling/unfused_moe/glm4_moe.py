@@ -87,8 +87,16 @@ class LinearGlm4MoeMoE(nn.Module):
         """Apply routed experts plus the shared expert branch, matching upstream GLM4 MoE."""
         residuals = hidden_states
         orig_shape = hidden_states.shape
-        router_logits = self.gate(hidden_states)
-        topk_indices, topk_weights = self.route_tokens_to_experts(router_logits)
+        gate_out = self.gate(hidden_states)
+        if isinstance(gate_out, tuple):
+            # Newer transformers routes inside Glm4MoeTopkRouter and returns
+            # (router_logits, topk_weights, topk_indices). Use the router's own
+            # result so selection matches upstream and the top-k override applies.
+            _, topk_weights, topk_indices = gate_out
+        else:
+            # Older transformers routers return only the raw logits.
+            router_logits = gate_out
+            topk_indices, topk_weights = self.route_tokens_to_experts(router_logits)
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
         hidden_states = hidden_states + self.shared_experts(residuals)
